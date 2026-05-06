@@ -2,7 +2,7 @@
   "name": "devjson-extension",
   "version": "0.0.1",
   "private": true,
-  "description": "程序员 JSON、Go Struct、Proto 转换调试工具",
+  "description": "面向开发者的多语言数据结构转换工具，支持 JSON 格式化、路径提取、Diff，以及生成 Go Struct、Proto、TypeScript Interface、Java Class、C# Model、Python Dataclass",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

@@ -107,7 +107,11 @@ const tabs = [
   { key: 'proto', name: 'JSON转Proto' },
   { key: 'goReverse', name: 'GoStruct转JSON' },
   { key: 'protoReverse', name: 'Proto转JSON' },
-  { key: 'diff', name: 'JSON Diff' }
+  { key: 'diff', name: 'JSON Diff' },
+  { key: 'ts', name: 'JSON转TS Interface' },
+  { key: 'java', name: 'JSON转Java Class' },
+  { key: 'csharp', name: 'JSON转C# Model' },
+  { key: 'python', name: 'JSON转Python Dataclass' }
 ]
 
 const currentTool = ref('format')
@@ -144,7 +148,11 @@ const resultTitle = computed(() => {
     proto: 'Proto 结果',
     goReverse: 'JSON 示例',
     protoReverse: 'JSON 示例',
-    diff: 'Diff 结果'
+    diff: 'Diff 结果',
+    ts: 'TypeScript Interface',
+    java: 'Java Class',
+    csharp: 'C# Model',
+    python: 'Python Dataclass'
   }
   return map[currentTool.value] || '结果'
 })
@@ -232,6 +240,10 @@ function runTool() {
     if (currentTool.value === 'goReverse') return runGoStructReverse()
     if (currentTool.value === 'protoReverse') return runProtoReverse()
     if (currentTool.value === 'diff') return runDiff()
+    if (currentTool.value === 'ts') return runTs()
+    if (currentTool.value === 'java') return runJava()
+    if (currentTool.value === 'csharp') return runCsharp()
+    if (currentTool.value === 'python') return runPython()
   } catch (error) {
     showError(error)
   }
@@ -477,6 +489,229 @@ function protoTypeDefaultValue(type) {
   if (['int32', 'int64', 'uint32', 'uint64', 'sint32', 'sint64', 'fixed32', 'fixed64', 'sfixed32', 'sfixed64', 'double', 'float'].includes(type)) return 0
   if (type === 'bytes') return ''
   return {}
+}
+
+function runTs() {
+  const obj = parseJson()
+  resultText.value = generateTsInterface(obj, rootName.value || 'Response')
+  updateInputInfo(obj)
+  saveHistory('json-to-ts', inputText.value)
+  setStatus('TypeScript Interface 生成成功', 'success')
+}
+
+function runJava() {
+  const obj = parseJson()
+  resultText.value = generateJavaClass(obj, rootName.value || 'Response')
+  updateInputInfo(obj)
+  saveHistory('json-to-java', inputText.value)
+  setStatus('Java Class 生成成功', 'success')
+}
+
+function runCsharp() {
+  const obj = parseJson()
+  resultText.value = generateCsharpModel(obj, rootName.value || 'Response')
+  updateInputInfo(obj)
+  saveHistory('json-to-csharp', inputText.value)
+  setStatus('C# Model 生成成功', 'success')
+}
+
+function runPython() {
+  const obj = parseJson()
+  resultText.value = generatePythonDataclass(obj, rootName.value || 'Response')
+  updateInputInfo(obj)
+  saveHistory('json-to-python', inputText.value)
+  setStatus('Python Dataclass 生成成功', 'success')
+}
+
+function toCamelCase(key) {
+  const pascal = toGoFieldName(key)
+  return pascal.charAt(0).toLowerCase() + pascal.slice(1)
+}
+
+// ── TypeScript Interface ──
+
+function generateTsInterface(obj, name) {
+  const interfaces = []
+  buildTsInterface(obj, name, interfaces)
+  return interfaces.reverse().join('\n\n')
+}
+
+function buildTsInterface(obj, name, interfaces) {
+  const rootObj = Array.isArray(obj) ? (obj[0] || {}) : obj
+  if (!rootObj || typeof rootObj !== 'object' || Array.isArray(rootObj)) return
+
+  const lines = [`interface ${name} {`]
+  Object.keys(rootObj).forEach((key) => {
+    lines.push(`  ${key}: ${inferTsType(rootObj[key], key, interfaces)};`)
+  })
+  lines.push('}')
+  interfaces.push(lines.join('\n'))
+}
+
+function inferTsType(value, key, interfaces) {
+  if (value === null || value === undefined) return 'null'
+  if (typeof value === 'string') return 'string'
+  if (typeof value === 'boolean') return 'boolean'
+  if (typeof value === 'number') return 'number'
+  if (Array.isArray(value)) {
+    if (value.length > 0 && value[0] && typeof value[0] === 'object' && !Array.isArray(value[0])) {
+      const childName = toGoFieldName(key) + 'Item'
+      buildTsInterface(value[0], childName, interfaces)
+      return childName + '[]'
+    }
+    if (value.length > 0) return inferTsType(value[0], key, interfaces) + '[]'
+    return 'any[]'
+  }
+  if (typeof value === 'object') {
+    const childName = toGoFieldName(key)
+    buildTsInterface(value, childName, interfaces)
+    return childName
+  }
+  return 'any'
+}
+
+// ── Java Class ──
+
+function generateJavaClass(obj, name) {
+  const classes = []
+  buildJavaClass(obj, name, classes)
+  const imports = 'import com.fasterxml.jackson.annotation.JsonProperty;\nimport java.util.List;\n'
+  return imports + '\n' + classes.reverse().join('\n\n')
+}
+
+function buildJavaClass(obj, name, classes) {
+  const rootObj = Array.isArray(obj) ? (obj[0] || {}) : obj
+  if (!rootObj || typeof rootObj !== 'object' || Array.isArray(rootObj)) return
+
+  const fields = []
+  const methods = []
+
+  Object.keys(rootObj).forEach((key) => {
+    const value = rootObj[key]
+    const javaType = inferJavaType(value, key, classes)
+    const fieldName = toCamelCase(key)
+    const capName = fieldName.charAt(0).toUpperCase() + fieldName.slice(1)
+
+    fields.push(`    @JsonProperty("${key}")`)
+    fields.push(`    private ${javaType} ${fieldName};`)
+    fields.push('')
+    methods.push(`    public ${javaType} get${capName}() { return ${fieldName}; }`)
+    methods.push(`    public void set${capName}(${javaType} val) { this.${fieldName} = val; }`)
+  })
+
+  const lines = [`public class ${name} {`, '', ...fields, ...methods, '}']
+  classes.push(lines.join('\n'))
+}
+
+function inferJavaType(value, key, classes) {
+  if (value === null || value === undefined) return 'Object'
+  if (typeof value === 'string') return 'String'
+  if (typeof value === 'boolean') return 'Boolean'
+  if (typeof value === 'number') return Number.isInteger(value) ? 'Integer' : 'Double'
+  if (Array.isArray(value)) {
+    if (value.length > 0 && value[0] && typeof value[0] === 'object' && !Array.isArray(value[0])) {
+      const childName = toGoFieldName(key) + 'Item'
+      buildJavaClass(value[0], childName, classes)
+      return `List<${childName}>`
+    }
+    if (value.length > 0) return `List<${inferJavaType(value[0], key, classes)}>`
+    return 'List<Object>'
+  }
+  if (typeof value === 'object') {
+    const childName = toGoFieldName(key)
+    buildJavaClass(value, childName, classes)
+    return childName
+  }
+  return 'Object'
+}
+
+// ── C# Model ──
+
+function generateCsharpModel(obj, name) {
+  const classes = []
+  buildCsharpClass(obj, name, classes)
+  const imports = 'using System.Collections.Generic;\nusing System.Text.Json.Serialization;\n'
+  return imports + '\n' + classes.reverse().join('\n\n')
+}
+
+function buildCsharpClass(obj, name, classes) {
+  const rootObj = Array.isArray(obj) ? (obj[0] || {}) : obj
+  if (!rootObj || typeof rootObj !== 'object' || Array.isArray(rootObj)) return
+
+  const lines = [`public class ${name}`, '{']
+  Object.keys(rootObj).forEach((key) => {
+    const value = rootObj[key]
+    const csType = inferCsharpType(value, key, classes)
+    const propName = toGoFieldName(key)
+    lines.push(`    [JsonPropertyName("${key}")]`)
+    lines.push(`    public ${csType} ${propName} { get; set; }`)
+    lines.push('')
+  })
+  lines.push('}')
+  classes.push(lines.join('\n'))
+}
+
+function inferCsharpType(value, key, classes) {
+  if (value === null || value === undefined) return 'object?'
+  if (typeof value === 'string') return 'string'
+  if (typeof value === 'boolean') return 'bool'
+  if (typeof value === 'number') return Number.isInteger(value) ? 'int' : 'double'
+  if (Array.isArray(value)) {
+    if (value.length > 0 && value[0] && typeof value[0] === 'object' && !Array.isArray(value[0])) {
+      const childName = toGoFieldName(key) + 'Item'
+      buildCsharpClass(value[0], childName, classes)
+      return `List<${childName}>`
+    }
+    if (value.length > 0) return `List<${inferCsharpType(value[0], key, classes)}>`
+    return 'List<object>'
+  }
+  if (typeof value === 'object') {
+    const childName = toGoFieldName(key)
+    buildCsharpClass(value, childName, classes)
+    return childName
+  }
+  return 'object'
+}
+
+// ── Python Dataclass ──
+
+function generatePythonDataclass(obj, name) {
+  const classes = []
+  buildPythonDataclass(obj, name, classes)
+  return 'from dataclasses import dataclass\nfrom typing import List, Optional, Any\n\n' + classes.join('\n\n')
+}
+
+function buildPythonDataclass(obj, name, classes) {
+  const rootObj = Array.isArray(obj) ? (obj[0] || {}) : obj
+  if (!rootObj || typeof rootObj !== 'object' || Array.isArray(rootObj)) return
+
+  const lines = ['@dataclass', `class ${name}:`]
+  Object.keys(rootObj).forEach((key) => {
+    lines.push(`    ${key}: ${inferPythonType(rootObj[key], key, classes)}`)
+  })
+  classes.push(lines.join('\n'))
+}
+
+function inferPythonType(value, key, classes) {
+  if (value === null || value === undefined) return 'Optional[Any]'
+  if (typeof value === 'string') return 'str'
+  if (typeof value === 'boolean') return 'bool'
+  if (typeof value === 'number') return Number.isInteger(value) ? 'int' : 'float'
+  if (Array.isArray(value)) {
+    if (value.length > 0 && value[0] && typeof value[0] === 'object' && !Array.isArray(value[0])) {
+      const childName = toGoFieldName(key) + 'Item'
+      buildPythonDataclass(value[0], childName, classes)
+      return `List[${childName}]`
+    }
+    if (value.length > 0) return `List[${inferPythonType(value[0], key, classes)}]`
+    return 'List[Any]'
+  }
+  if (typeof value === 'object') {
+    const childName = toGoFieldName(key)
+    buildPythonDataclass(value, childName, classes)
+    return childName
+  }
+  return 'Any'
 }
 
 function runDiff() {
